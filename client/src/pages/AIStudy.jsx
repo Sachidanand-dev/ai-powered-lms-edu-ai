@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const AIStudy = () => {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const [file, setFile] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [context, setContext] = useState('');
@@ -19,7 +23,7 @@ const AIStudy = () => {
                         Authorization: `Bearer ${user?.token}`,
                     },
                 };
-                const { data } = await axios.get('http://localhost:5000/api/ai/chat-history', config);
+                const { data } = await axios.get('/api/ai/chat-history', config);
                 
                 const formattedHistory = data.map(msg => ({
                     type: msg.role === 'model' ? 'ai' : msg.role, // 'user' stays 'user'
@@ -36,17 +40,19 @@ const AIStudy = () => {
         }
     }, [user]);
 
-    const handleFileChange = (e) => {
+    const handleFileChange = async (e) => {
         const selected = e.target.files[0];
         if (!selected) return;
         setFile(selected);
+        await handleUpload(selected);
     };
 
-    const handleUpload = async () => {
-        if (!file) return;
+    const handleUpload = async (selectedFile) => {
+        const fileToUpload = selectedFile || file;
+        if (!fileToUpload) return;
 
         const formData = new FormData();
-        formData.append('pdf', file);
+        formData.append('pdf', fileToUpload);
 
         setUploading(true);
         try {
@@ -58,7 +64,7 @@ const AIStudy = () => {
             };
 
             const { data } = await axios.post(
-                'http://localhost:5000/api/ai/upload',
+                '/api/ai/upload',
                 formData,
                 config
             );
@@ -68,7 +74,7 @@ const AIStudy = () => {
                 ...prev,
                 {
                     type: 'system',
-                    text: `📄 "${file.name}" uploaded successfully. You can now ask questions about this PDF.`,
+                    text: `📄 "${fileToUpload.name}" uploaded successfully. You can now ask questions about this PDF.`,
                 },
             ]);
         } catch (error) {
@@ -94,7 +100,7 @@ const AIStudy = () => {
                 },
             };
             const { data } = await axios.post(
-                'http://localhost:5000/api/ai/chat',
+                '/api/ai/chat',
                 { message: userMsg, context },
                 config
             );
@@ -118,15 +124,9 @@ const AIStudy = () => {
     };
 
     const handleGenerateQuiz = () => {
-        // Use the last user message or a default topic
         const lastUserMsg = chatHistory.slice().reverse().find(msg => msg.type === 'user');
         const topic = lastUserMsg ? lastUserMsg.text : 'General Knowledge';
-        // Navigate to quiz page with topic state
-        // Assuming we can pass state via navigation or query param. 
-        // For now, let's use a query param or just navigate and let user know.
-        // Actually, the QuizGenerator page might expect state. Let's check or just send them to /quiz.
-        // Better: Navigate to /quiz with state
-        window.location.href = `/quiz?topic=${encodeURIComponent(topic)}`;
+        navigate(`/quiz?topic=${encodeURIComponent(topic)}`, { state: { context } });
     };
 
     const handleClearChat = async () => {
@@ -136,8 +136,10 @@ const AIStudy = () => {
             const config = {
                 headers: { Authorization: `Bearer ${user?.token}` },
             };
-            await axios.delete('http://localhost:5000/api/ai/chat-history', config);
+            await axios.delete('/api/ai/chat-history', config);
             setChatHistory([]);
+            setContext(''); // Also clear context
+            setFile(null);
         } catch (error) {
             console.error('Error clearing chat:', error);
             alert('Failed to clear chat history');
@@ -146,21 +148,17 @@ const AIStudy = () => {
 
     return (
         <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-50 transition-colors duration-300">
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-4xl mx-auto h-[calc(100vh-8rem)] flex flex-col">
                 {/* Header */}
-                <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between shrink-0">
                     <div>
                         <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300">
                             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
                             <span>AI-Powered Study Companion</span>
                         </div>
-                        <h1 className="mt-4 text-3xl sm:text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400">
+                        <h1 className="mt-2 text-2xl sm:text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-400">
                             AI Study Buddy
                         </h1>
-                        <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-300 max-w-2xl">
-                            Upload your notes or books as PDF and chat with an AI mentor for summaries,
-                            explanations, and exam-focused guidance.
-                        </p>
                     </div>
                     <div className="flex flex-col items-end gap-2">
                          <button
@@ -176,291 +174,233 @@ const AIStudy = () => {
                     </div>
                 </header>
 
-                {/* Layout */}
-                <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)]">
-                    {/* Upload Section */}
-                    <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-lg shadow-slate-200/70 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-black/40">
-                        <div className="pointer-events-none absolute -top-10 -right-10 h-32 w-32 rounded-full bg-gradient-to-br from-blue-500/20 via-indigo-500/10 to-purple-500/20 blur-2xl" />
-                        <div className="relative">
+                {/* Chat Section */}
+                <section className="flex-1 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/70 dark:border-slate-800 dark:bg-slate-900/90 dark:shadow-black/40">
+                    {/* Chat Header */}
+                    <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/80 shrink-0">
+                        <div>
                             <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50">
-                                1. Upload Study Material
+                                Chat with AI Mentor
                             </h2>
-                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                Supported: PDF files. Try adding your class notes, books, or handouts.
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                Ask doubts, request summaries, or generate questions.
                             </p>
-
-                            <div className="mt-5 space-y-4">
-                                <label className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 px-4 py-8 text-center text-slate-500 hover:border-blue-500 hover:bg-blue-50/70 hover:text-blue-600 transition-all dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400 dark:hover:border-blue-400 dark:hover:bg-slate-800/80 dark:hover:text-blue-300 cursor-pointer">
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-600/10 dark:bg-blue-500/15">
-                                            <svg
-                                                xmlns="http://www.w3.org/2000/svg"
-                                                viewBox="0 0 24 24"
-                                                className="h-6 w-6 text-blue-600 dark:text-blue-400"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                strokeWidth="1.7"
-                                            >
-                                                <path
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                    d="M4 16.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5M12 4v10m0-10-3.5 3.5M12 4l3.5 3.5"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-semibold">
-                                                Click to browse or drop your PDF here
-                                            </p>
-                                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                Max ~10 MB • One file at a time
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <input
-                                        type="file"
-                                        accept=".pdf"
-                                        onChange={handleFileChange}
-                                        className="hidden"
-                                    />
-                                </label>
-
-                                {/* Selected file info */}
-                                {file && (
-                                    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                        <div className="flex flex-1 items-center gap-2 truncate">
-                                            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600/10 text-[10px] font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
-                                                PDF
-                                            </span>
-                                            <span className="truncate">{file.name}</span>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setFile(null)}
-                                            className="ml-3 text-xs text-slate-400 hover:text-red-500 transition-colors"
-                                        >
-                                            Clear
-                                        </button>
-                                    </div>
-                                )}
-
-                                <button
-                                    onClick={handleUpload}
-                                    disabled={uploading || !file}
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-500/30 hover:shadow-lg hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
-                                >
-                                    {uploading ? (
-                                        <>
-                                            <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-transparent animate-spin" />
-                                            <span>Uploading & Analyzing...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>Upload & Analyze</span>
-                                        </>
-                                    )}
-                                </button>
-
-                                <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-                                    Tip: Once uploaded, ask things like{' '}
-                                    <span className="font-semibold text-slate-700 dark:text-slate-200">
-                                        “Summarize chapter 2”{' '}
-                                    </span>
-                                    or{' '}
-                                    <span className="font-semibold text-slate-700 dark:text-slate-200">
-                                        “Create 5 MCQs from this topic”.
-                                    </span>
-                                </div>
-                            </div>
                         </div>
-                    </section>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleGenerateQuiz}
+                                className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-orange-100 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-200 transition-colors dark:bg-orange-900/30 dark:text-orange-400 dark:hover:bg-orange-900/50"
+                            >
+                                <span>⚡ Generate Quiz</span>
+                            </button>
+                        </div>
+                    </div>
 
-                    {/* Chat Section */}
-                    <section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/70 dark:border-slate-800 dark:bg-slate-900/90 dark:shadow-black/40">
-                        {/* Chat Header */}
-                        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/80">
-                            <div>
-                                <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50">
-                                    2. Chat with AI Mentor
-                                </h2>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    Ask doubts, request summaries, generate questions, or plan your revision.
+                    {/* Chat Body */}
+                    <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/70 px-4 py-5 dark:bg-slate-950/40">
+                        {/* Empty state */}
+                        {chatHistory.length === 0 && !loading && (
+                            <div className="mx-auto max-w-sm rounded-xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400 mt-10">
+                                <p className="font-medium text-slate-600 dark:text-slate-200 mb-2">
+                                    No messages yet
+                                </p>
+                                <p>
+                                    Upload a PDF using the paperclip icon below, or just ask a question to start!
                                 </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={handleGenerateQuiz}
-                                    className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-orange-100 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-200 transition-colors dark:bg-orange-900/30 dark:text-orange-400 dark:hover:bg-orange-900/50"
-                                >
-                                    <span>⚡ Generate Quiz</span>
-                                </button>
-                                <div className="hidden sm:flex flex-col items-end text-[11px] text-slate-500 dark:text-slate-400">
-                                    <span>Study Mode</span>
-                                    <span className="text-[10px] uppercase tracking-wide">
-                                        PDF-aware chat
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
+                        )}
 
-                        {/* Chat Body */}
-                        <div className="flex-1 space-y-4 overflow-y-auto bg-slate-50/70 px-4 py-5 dark:bg-slate-950/40">
-                            {/* Empty state */}
-                            {chatHistory.length === 0 && !loading && (
-                                <div className="mx-auto max-w-sm rounded-xl border border-dashed border-slate-300 bg-white/80 p-4 text-center text-xs text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                    <p className="font-medium text-slate-600 dark:text-slate-200 mb-1">
-                                        No messages yet
-                                    </p>
-                                    <p>
-                                        Upload a PDF and start by asking
-                                        <br />
-                                        <span className="italic">
-                                            “What are the key points of this chapter?”
-                                        </span>
-                                        .
-                                    </p>
-                                </div>
-                            )}
-
-                            {/* Messages */}
-                            {chatHistory.map((msg, index) => (
+                        {/* Messages */}
+                        {chatHistory.map((msg, index) => (
+                            <div
+                                key={index}
+                                className={`flex ${
+                                    msg.type === 'user' ? 'justify-end' : 'justify-start'
+                                }`}
+                            >
                                 <div
-                                    key={index}
-                                    className={`flex ${
-                                        msg.type === 'user' ? 'justify-end' : 'justify-start'
+                                    className={`flex max-w-[85%] items-start gap-2 ${
+                                        msg.type === 'user' ? 'flex-row-reverse' : 'flex-row'
                                     }`}
                                 >
+                                    {/* Avatar */}
+                                    {msg.type !== 'system' && (
+                                        <div
+                                            className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold shadow-sm ${
+                                                msg.type === 'user'
+                                                    ? 'border-blue-200 bg-blue-600 text-white dark:border-blue-500/60 dark:bg-blue-500'
+                                                    : 'border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+                                            }`}
+                                        >
+                                            {msg.type === 'user' ? 'You' : 'AI'}
+                                        </div>
+                                    )}
+
+                                    {/* Bubble */}
                                     <div
-                                        className={`flex max-w-[80%] items-start gap-2 ${
-                                            msg.type === 'user' ? 'flex-row-reverse' : 'flex-row'
+                                        className={`rounded-2xl px-5 py-4 text-sm shadow-sm transition-all ${
+                                            msg.type === 'user'
+                                                ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-tr-none shadow-blue-500/20'
+                                                : msg.type === 'system'
+                                                ? 'bg-amber-50 text-amber-800 border border-amber-100 text-xs dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700/60'
+                                                : 'bg-white text-slate-800 rounded-tl-none border border-slate-100 shadow-slate-200/50 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700 dark:shadow-black/20'
                                         }`}
                                     >
-                                        {/* Avatar */}
-                                        {msg.type !== 'system' && (
-                                            <div
-                                                className={`mt-1 flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-semibold shadow-sm ${
-                                                    msg.type === 'user'
-                                                        ? 'border-blue-200 bg-blue-600 text-white dark:border-blue-500/60 dark:bg-blue-500'
-                                                        : 'border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
-                                                }`}
+                                        <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                                            <ReactMarkdown 
+                                                remarkPlugins={[remarkGfm]}
+                                                components={{
+                                                    code({node, inline, className, children, ...props}) {
+                                                        const match = /language-(\w+)/.exec(className || '')
+                                                        return !inline && match ? (
+                                                            <div className="rounded-md bg-slate-800 p-2 my-2 overflow-x-auto">
+                                                                <code className={className} {...props}>
+                                                                    {children}
+                                                                </code>
+                                                            </div>
+                                                        ) : (
+                                                            <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+                                                                {children}
+                                                            </code>
+                                                        )
+                                                    }
+                                                }}
                                             >
-                                                {msg.type === 'user' ? 'You' : 'AI'}
+                                                {msg.text}
+                                            </ReactMarkdown>
+                                        </div>
+                                        
+                                        {/* Copy Button */}
+                                        {msg.type === 'ai' && (
+                                            <div className="mt-2 flex justify-end">
+                                                <button
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(msg.text);
+                                                        // Optional: Show a temporary "Copied!" tooltip or toast
+                                                        // For now, we'll just rely on the user knowing it worked or adding a visual cue later if needed.
+                                                        // Let's change the icon temporarily? No, simple is better for now.
+                                                        alert('Copied to clipboard!');
+                                                    }}
+                                                    className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-1"
+                                                    title="Copy to clipboard"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                                                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                                                    </svg>
+                                                </button>
                                             </div>
                                         )}
 
-                                        {/* Bubble */}
-                                        <div
-                                            className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                                                msg.type === 'user'
-                                                    ? 'bg-blue-600 text-white rounded-tr-none dark:bg-blue-500'
-                                                    : msg.type === 'system'
-                                                    ? 'bg-amber-50 text-amber-800 border border-amber-100 text-xs dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700/60'
-                                                    : 'bg-white text-slate-900 rounded-tl-none border border-slate-200 dark:bg-slate-800 dark:text-slate-50 dark:border-slate-700'
-                                            }`}
-                                        >
-                                            {msg.text}
-                                            {/* Show "Generate Quiz" button if AI suggests it */}
-                                            {msg.type === 'ai' && msg.text.includes("Would you like to take a quiz") && (
-                                                <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
-                                                    <button 
-                                                        onClick={handleGenerateQuiz}
-                                                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                                                    >
-                                                        <span>📝 Yes, generate a quiz on this!</span>
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
 
-                            {/* Loading bubble */}
-                            {loading && (
-                                <div className="flex justify-start">
-                                    <div className="flex items-center gap-2 rounded-2xl rounded-tl-none border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                        <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" />
-                                        <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce delay-75" />
-                                        <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce delay-150" />
                                     </div>
                                 </div>
-                            )}
+                            </div>
+                        ))}
+
+                        {/* Loading bubble */}
+                        {loading && (
+                            <div className="flex justify-start">
+                                <div className="flex items-center gap-2 rounded-2xl rounded-tl-none border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                    <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" />
+                                    <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce delay-75" />
+                                    <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce delay-150" />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Quick prompts + Input */}
+                    <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-3 space-y-3 dark:border-slate-800 dark:bg-slate-900/80 shrink-0">
+                        {/* Quick prompts */}
+                        <div className="flex flex-wrap gap-2 text-[11px]">
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    handleQuickPrompt('Summarize this PDF in simple points.')
+                                }
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
+                            >
+                                Summarize chapter
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    handleQuickPrompt('Create 5 important exam questions from this PDF.')
+                                }
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
+                            >
+                                Generate questions
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    handleQuickPrompt('Explain the main concepts as if I am a beginner.')
+                                }
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
+                            >
+                                Explain like I&apos;m 15
+                            </button>
                         </div>
 
-                        {/* Quick prompts + Input */}
-                        <div className="border-t border-slate-200 bg-slate-50/80 px-4 py-3 space-y-3 dark:border-slate-800 dark:bg-slate-900/80">
-                            {/* Quick prompts */}
-                            <div className="flex flex-wrap gap-2 text-[11px]">
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        handleQuickPrompt('Summarize this PDF in simple points.')
-                                    }
-                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
-                                >
-                                    Summarize chapter
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        handleQuickPrompt('Create 5 important exam questions from this PDF.')
-                                    }
-                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
-                                >
-                                    Generate questions
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        handleQuickPrompt('Explain the main concepts as if I am a beginner.')
-                                    }
-                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/70 transition-colors dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-800"
-                                >
-                                    Explain like I&apos;m 15
-                                </button>
-                            </div>
-
-                            {/* Input row */}
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="text"
-                                    value={message}
-                                    onChange={(e) => setMessage(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            handleSendMessage();
-                                        }
-                                    }}
-                                    placeholder="Ask a question about your document..."
-                                    className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder-slate-500"
-                                />
-                                <button
-                                    onClick={handleSendMessage}
-                                    disabled={loading || !message.trim()}
-                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-500/40 hover:shadow-lg hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
-                                >
-                                    <span>Send</span>
-                                    {/* Paper plane icon */}
-                                    <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="1.8"
-                                        className="h-4 w-4"
-                                    >
-                                        <path
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            d="M5 12h.01M5.5 12.5 4 20l8-3.5m5.5-10-13 5.5L11 14l4 4.5 5.5-13Z"
-                                        />
+                        {/* Input row */}
+                        <div className="flex items-center gap-3">
+                            {/* File Upload Button */}
+                            <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-500 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 transition-all dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400 dark:hover:border-blue-400 dark:hover:text-blue-300 dark:hover:bg-slate-900">
+                                {uploading ? (
+                                    <span className="h-4 w-4 rounded-full border-2 border-slate-400 border-t-transparent animate-spin" />
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                                     </svg>
-                                </button>
-                            </div>
+                                )}
+                                <input
+                                    type="file"
+                                    accept=".pdf"
+                                    onChange={handleFileChange}
+                                    className="hidden"
+                                    disabled={uploading}
+                                />
+                            </label>
+
+                            <input
+                                type="text"
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleSendMessage();
+                                    }
+                                }}
+                                placeholder="Ask a question about your document..."
+                                className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder-slate-500"
+                            />
+                            <button
+                                onClick={handleSendMessage}
+                                disabled={loading || !message.trim()}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-500/40 hover:shadow-lg hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
+                            >
+                                <span>Send</span>
+                                {/* Paper plane icon */}
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.8"
+                                    className="h-4 w-4"
+                                >
+                                    <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M5 12h.01M5.5 12.5 4 20l8-3.5m5.5-10-13 5.5L11 14l4 4.5 5.5-13Z"
+                                    />
+                                </svg>
+                            </button>
                         </div>
-                    </section>
-                </div>
+                    </div>
+                </section>
             </div>
         </div>
     );

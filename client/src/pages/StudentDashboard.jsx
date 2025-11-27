@@ -19,11 +19,11 @@ const StudentDashboard = () => {
                         Authorization: `Bearer ${user.token}`,
                     },
                 };
-                const { data } = await axios.get('http://localhost:5000/api/dashboard/student', config);
+                const { data } = await axios.get('/api/dashboard/student', config);
                 setStats(data.stats);
                 setCourses(data.courses);
 
-                const quizRes = await axios.get('http://localhost:5000/api/quiz/history', config);
+                const quizRes = await axios.get('/api/quiz/history', config);
                 setQuizHistory(quizRes.data);
 
                 setLoading(false);
@@ -72,7 +72,7 @@ const StudentDashboard = () => {
                         <h3 className="text-gray-500 dark:text-gray-400 text-sm font-medium mb-2">Current Streak</h3>
                         <div className="flex items-center gap-2">
                             <span className="text-3xl font-bold text-orange-500 dark:text-orange-400">{stats.streak || 0}</span>
-                            <span className="text-lg text-gray-400">days</span>
+                            <span className="text-lg text-gray-400">day</span>
                             <span className="text-2xl">🔥</span>
                         </div>
                     </div>

@@ -24,7 +24,7 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (email, password) => {
         try {
-            const { data } = await axios.post('http://localhost:5000/api/auth/login', {
+            const { data } = await axios.post('/api/auth/login', {
                 email,
                 password,
             });
@@ -41,7 +41,7 @@ export const AuthProvider = ({ children }) => {
 
     const register = async (firstName, lastName, email, password, phoneNumber) => {
         try {
-            const { data } = await axios.post('http://localhost:5000/api/auth/register', {
+            const { data } = await axios.post('/api/auth/register', {
                 firstName,
                 lastName,
                 email,
@@ -60,7 +60,7 @@ export const AuthProvider = ({ children }) => {
 
     const verifyOtp = async (email, otp) => {
         try {
-            const { data } = await axios.post('http://localhost:5000/api/auth/verify-otp', {
+            const { data } = await axios.post('/api/auth/verify-otp', {
                 email,
                 otp,
             });
@@ -82,7 +82,7 @@ export const AuthProvider = ({ children }) => {
                     Authorization: `Bearer ${user.token}`,
                 },
             };
-            const { data } = await axios.put('http://localhost:5000/api/auth/profile', profileData, config);
+            const { data } = await axios.put('/api/auth/profile', profileData, config);
             localStorage.setItem('userInfo', JSON.stringify(data));
             setUser(data);
             return { success: true, message: 'Profile updated successfully' };

@@ -1,12 +1,11 @@
 const fs = require('fs');
-const pdfParse = require('pdf-extraction');
+
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Chat = require('../models/Chat');
-const OpenAI = require('openai');
 
-// --- Unified AI Provider Logic ---
+// --- AI Provider Logic (Gemini Only) ---
 
-// Helper: Get all available providers from .env
+// Helper: Get all available Gemini keys from .env
 const getAvailableProviders = () => {
     const providers = [];
 
@@ -18,19 +17,15 @@ const getAvailableProviders = () => {
         i++;
     }
 
-    // 2. xAI Grok Keys
-    if (process.env.GROK_API_KEY) providers.push({ type: 'grok', key: process.env.GROK_API_KEY });
-    // Add support for multiple Grok keys if needed in future
-    
     return providers;
 };
 
-// Helper: Generate content using a random provider with failover
+// Helper: Generate content using a random Gemini key with failover
 const generateAIContent = async (prompt, systemInstruction = "You are a helpful AI assistant.") => {
     let providers = getAvailableProviders();
     
     if (providers.length === 0) {
-        throw new Error('No AI API keys configured (Gemini or Grok).');
+        throw new Error('No Gemini API keys configured.');
     }
 
     // Shuffle providers to load balance
@@ -40,41 +35,21 @@ const generateAIContent = async (prompt, systemInstruction = "You are a helpful 
 
     for (const provider of providers) {
         try {
-            // console.log(`Attempting with provider: ${provider.type}...`); // Debug log
+            const genAI = new GoogleGenerativeAI(provider.key);
+            const model = genAI.getGenerativeModel({ 
+                model: 'gemini-2.0-flash',
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }],
+                    role: "model"
+                } 
+            });
             
-            if (provider.type === 'gemini') {
-                const genAI = new GoogleGenerativeAI(provider.key);
-                const model = genAI.getGenerativeModel({ 
-                    model: 'gemini-2.5-flash',
-                    systemInstruction: {
-                        parts: [{ text: systemInstruction }],
-                        role: "model"
-                    } 
-                });
-                
-                const result = await model.generateContent(prompt);
-                const response = await result.response;
-                return response.text();
-
-            } else if (provider.type === 'grok') {
-                const openai = new OpenAI({
-                    apiKey: provider.key,
-                    baseURL: 'https://api.x.ai/v1',
-                });
-
-                const completion = await openai.chat.completions.create({
-                    model: "grok-beta",
-                    messages: [
-                        { role: "system", content: systemInstruction },
-                        { role: "user", content: prompt }
-                    ],
-                });
-
-                return completion.choices[0].message.content;
-            }
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            return response.text();
 
         } catch (error) {
-            console.error(`Provider ${provider.type} failed:`, error.message);
+            console.error(`Gemini Provider failed:`, error.message);
             lastError = error;
             // Continue to next provider
         }
@@ -88,6 +63,9 @@ const generateAIContent = async (prompt, systemInstruction = "You are a helpful 
 // @desc    Upload PDF and extract text
 // @route   POST /api/ai/upload
 // @access  Private
+// @desc    Upload PDF and extract text
+// @route   POST /api/ai/upload
+// @access  Private
 const uploadPDF = async (req, res) => {
     try {
         if (!req.file) {
@@ -95,13 +73,36 @@ const uploadPDF = async (req, res) => {
         }
 
         const dataBuffer = fs.readFileSync(req.file.path);
-        const data = await pdfParse(dataBuffer);
+        
+        // Use pdfjs-dist for robust parsing
+        // Dynamic import for ES module support in CommonJS
+        const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        
+        const loadingTask = getDocument({ 
+            data: new Uint8Array(dataBuffer),
+            useSystemFonts: true,
+            disableFontFace: true
+        });
+        
+        const doc = await loadingTask.promise;
+        const numPages = doc.numPages;
+        let fullText = '';
+        
+        // Limit pages to avoid timeout on huge docs (e.g., max 20 pages)
+        const maxPages = Math.min(numPages, 20);
+
+        for (let i = 1; i <= maxPages; i++) {
+            const page = await doc.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map(item => item.str).join(' ');
+            fullText += pageText + '\n';
+        }
 
         res.json({
             message: 'PDF uploaded and processed',
             filename: req.file.filename,
-            textSnippet: data.text.substring(0, 2000),
-            fullTextLength: data.text.length,
+            textSnippet: fullText.substring(0, 5000), // Increased snippet size
+            fullTextLength: fullText.length,
         });
     } catch (error) {
         console.error('PDF Parsing Error:', error);
@@ -123,6 +124,9 @@ const chatWithAI = async (req, res) => {
         // Fetch existing chat history for context
         let chat = await Chat.findOne({ user: userId });
         
+        // Check if context is actually provided and not just an empty string
+        const hasContext = context && context.trim().length > 0;
+        
         // Format recent history (last 6 messages = 3 turns)
         let historyContext = "";
         if (chat && chat.messages.length > 0) {
@@ -132,16 +136,25 @@ const chatWithAI = async (req, res) => {
             ).join('\n');
         }
 
-        const systemInstruction = `You are a helpful and concise AI study mentor.
-        1. If CONTEXT is provided below, answer based on that context.
-        2. If NO CONTEXT is provided, answer the user's question using your general knowledge. Do NOT mention "context" or "document" unless the user asks about it.
-        3. Never say "I cannot access external files". The text provided in CONTEXT is the file content.
-        4. Keep answers short and direct.
-        5. If the topic is suitable for a quiz, end with: "Would you like to take a quiz on this topic?"`;
+        const systemInstruction = `You are an expert AI study mentor.
+        CRITICAL INSTRUCTION: The user has uploaded a document, and its text content is provided to you below as "DOCUMENT CONTENT".
+        
+        GUIDELINES:
+        1. You MUST answer questions based on this "DOCUMENT CONTENT".
+        2. Do NOT say "I cannot open files" or "I cannot access PDFs". You HAVE the content right here.
+        3. Treat the provided text as the absolute truth for the document.
+        4. If the user asks to "summarize the pdf" or "explain this file", use the "DOCUMENT CONTENT" to do so.
+        5. FORMATTING RULES:
+           - Use **Bold** for key terms and concepts.
+           - Use Numbered Lists (1., 2., 3.) strictly when listing items, steps, or generating questions.
+           - Use Bullet points for unordered lists.
+           - Use ### Headers for sections if the response is long.
+        6. If the user asks for questions, ALWAYS number them (e.g., "Question 1:", "Question 2:").
+        7. Keep answers concise and helpful.`;
         
         let prompt = "";
         if (hasContext) {
-            prompt += `CONTEXT FROM UPLOADED DOCUMENT:\n${context}\n\n`;
+            prompt += `--- BEGIN DOCUMENT CONTENT ---\n${context}\n--- END DOCUMENT CONTENT ---\n\n`;
         }
         
         if (historyContext) {
@@ -191,13 +204,18 @@ const getChatHistory = async (req, res) => {
 // @route   POST /api/ai/quiz
 // @access  Private
 const generateQuiz = async (req, res) => {
-    const { topic } = req.body;
+    const { topic, context } = req.body;
 
     try {
         const systemInstruction = `You are an expert quiz generator. Return ONLY raw JSON.`;
         
-        const prompt = `
-        Generate a quiz about "${topic}".
+        let prompt = `Generate a quiz about "${topic}".`;
+        
+        if (context && context.trim().length > 0) {
+            prompt += `\n\nUse the following DOCUMENT CONTENT as the primary source for the questions:\n\n--- BEGIN DOCUMENT CONTENT ---\n${context}\n--- END DOCUMENT CONTENT ---\n\n`;
+        }
+
+        prompt += `
         Create 10 multiple choice questions.
         Return the response ONLY as a valid JSON array with this structure:
         [

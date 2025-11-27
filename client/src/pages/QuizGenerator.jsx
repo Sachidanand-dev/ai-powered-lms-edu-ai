@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 
 const QuizGenerator = () => {
     const { user } = useAuth();
+    const location = useLocation();
     const [topic, setTopic] = useState('');
     const [quiz, setQuiz] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -39,13 +41,16 @@ const QuizGenerator = () => {
         setShowResults(false);
         setAnswers({});
 
+        // Get context from location state if available
+        const context = location.state?.context || '';
+
         try {
             const config = {
                 headers: { Authorization: `Bearer ${user?.token}` },
             };
             const { data } = await axios.post(
-                'http://localhost:5000/api/ai/quiz',
-                { topic: searchTopic.trim() },
+                '/api/ai/quiz',
+                { topic: searchTopic.trim(), context },
                 config
             );
             setQuiz(data.quiz || []);
@@ -250,7 +255,7 @@ const QuizGenerator = () => {
                                             headers: { Authorization: `Bearer ${user?.token}` },
                                         };
                                         await axios.post(
-                                            'http://localhost:5000/api/quiz/save',
+                                            '/api/quiz/save',
                                             {
                                                 topic,
                                                 score: finalScore,
